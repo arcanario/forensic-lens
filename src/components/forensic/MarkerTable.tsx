@@ -42,7 +42,7 @@ export function MarkerTable({ markers, isDidactic }: MarkerTableProps) {
                 <td className="px-4 py-2 text-muted-foreground">
                   0x{marker.offset.toString(16).toUpperCase().padStart(8, '0')}
                 </td>
-                <td className="px-4 py-2 text-primary">0x{marker.marker}</td>
+                <td className="px-4 py-2 text-primary">0x{marker.markerHex}</td>
                 <td className="px-4 py-2 text-foreground font-semibold">{marker.name}</td>
                 <td className="px-4 py-2 text-muted-foreground">
                   {marker.length > 0 ? `${marker.length} bytes` : '—'}

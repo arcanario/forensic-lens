@@ -1,129 +1,46 @@
-import { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, BookOpen, Shield, Scan, FileText } from 'lucide-react';
-import exifr from 'exifr';
+import { useState } from 'react';
+import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
+import { Scan, FileImage, FileText, Image, Shield, Sparkles, ArrowRight, Zap, Eye, Layers } from 'lucide-react';
 
-import { FileUpload } from '@/components/forensic/FileUpload';
-import { HealthIndicator } from '@/components/forensic/HealthIndicator';
-import { MarkerTable } from '@/components/forensic/MarkerTable';
-import { HexViewer } from '@/components/forensic/HexViewer';
-import { HistogramChart } from '@/components/forensic/HistogramChart';
-import { QuantizationView } from '@/components/forensic/QuantizationView';
-import { ELAViewer } from '@/components/forensic/ELAViewer';
-import { MetadataPanel } from '@/components/forensic/MetadataPanel';
-import { ImagePreview } from '@/components/forensic/ImagePreview';
-import { CompressionInfo } from '@/components/forensic/CompressionInfo';
-import { HuffmanView } from '@/components/forensic/HuffmanView';
-import { SignatureMatch } from '@/components/forensic/SignatureMatch';
-import { ForensicLog } from '@/components/forensic/ForensicLog';
-import { StructureSummary } from '@/components/forensic/StructureSummary';
+type DocType = 'jpeg' | 'png' | 'pdf';
 
-import {
-  fullJpegParse,
-  computeColorHistogram,
-  computeHealthScore,
-  generateHexDump,
-  type FullAnalysisResult,
-} from '@/lib/forensic-analyzer';
-
-type Mode = 'didactic' | 'expert';
+const docTypes: { id: DocType; label: string; ext: string; icon: any; color: string; glowClass: string; description: string; features: string[] }[] = [
+  {
+    id: 'jpeg',
+    label: 'JPEG',
+    ext: '.jpg / .jpeg',
+    icon: FileImage,
+    color: 'text-primary',
+    glowClass: 'glow-primary',
+    description: 'Análise forense completa de arquivos JPEG com parsing de marcadores, tabelas DQT/DHT, ELA e assinaturas de compressão.',
+    features: ['Marcadores SOI→EOI', 'Tabelas de Quantização', 'Huffman Tables', 'ELA (Error Level Analysis)', 'Assinaturas de Software', 'Histogramas RGB'],
+  },
+  {
+    id: 'png',
+    label: 'PNG',
+    ext: '.png',
+    icon: Image,
+    color: 'text-info',
+    glowClass: 'glow-primary',
+    description: 'Análise de integridade e metadados de imagens PNG com histogramas e detecção de software.',
+    features: ['Metadados EXIF', 'Histograma de Cores', 'Detecção de Software', 'Informações de Arquivo'],
+  },
+  {
+    id: 'pdf',
+    label: 'PDF',
+    ext: '.pdf',
+    icon: FileText,
+    color: 'text-warning',
+    glowClass: 'glow-warning',
+    description: 'Parsing estrutural completo de documentos PDF: objetos, tabela XRef, trailer, fontes, imagens e metadados.',
+    features: ['Objetos PDF', 'Tabela XRef', 'Trailer & Info', 'Fontes Embutidas', 'Imagens Extraídas', 'Segurança & Criptografia'],
+  },
+];
 
 const Index = () => {
-  const [mode, setMode] = useState<Mode>('didactic');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState<FullAnalysisResult | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [exifData, setExifData] = useState<Record<string, any> | null>(null);
-
-  const handleFileSelect = useCallback(async (file: File) => {
-    setIsAnalyzing(true);
-    setResult(null);
-    setExifData(null);
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const isJpeg = file.type === 'image/jpeg';
-      const isPng = file.type === 'image/png';
-
-      const url = URL.createObjectURL(file);
-      setImageUrl(url);
-
-      // Full JPEG parse
-      const parsed = isJpeg ? fullJpegParse(buffer) : {
-        markers: [],
-        markerSequence: '',
-        totalMarkers: 0,
-        quantizationTables: [],
-        estimatedQuality: null,
-        qualityMethod: '',
-        sofInfo: null,
-        huffmanTables: [],
-        sosInfo: null,
-        jfifInfo: null,
-        adobeInfo: null,
-        driInfo: null,
-        comments: [],
-        subsamplingLabel: 'N/A',
-        hasThumbnail: false,
-        thumbnailSource: '',
-        hasTrailingData: false,
-        trailingDataSize: 0,
-        signatures: [],
-        hexDump: generateHexDump(buffer, 2048),
-        logOutput: ['Arquivo não-JPEG — análise estrutural limitada'],
-        possibleEditor: null,
-      };
-
-      // EXIF
-      let parsedExif: Record<string, any> | null = null;
-      try {
-        parsedExif = await exifr.parse(file, { gps: true, xmp: true, icc: false });
-      } catch {}
-      setExifData(parsedExif);
-
-      // Histogram
-      let colorHistogram = { r: new Array(256).fill(0), g: new Array(256).fill(0), b: new Array(256).fill(0) };
-      if (isJpeg || isPng) {
-        try {
-          const img = new Image();
-          img.src = url;
-          await new Promise<void>((resolve) => { img.onload = () => resolve(); });
-          const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-          const ctx = canvas.getContext('2d')!;
-          ctx.drawImage(img, 0, 0);
-          colorHistogram = computeColorHistogram(ctx.getImageData(0, 0, canvas.width, canvas.height));
-        } catch {}
-      }
-
-      // Health
-      const { score, details } = computeHealthScore(parsed, parsedExif, isJpeg);
-
-      // Editor detection
-      let possibleEditor = parsed.possibleEditor;
-      if (parsedExif?.Software) {
-        possibleEditor = `Detectado: ${parsedExif.Software}`;
-      } else if (parsed.signatures.length > 0) {
-        possibleEditor = parsed.signatures[0].name;
-      }
-
-      setResult({
-        ...parsed,
-        fileInfo: { name: file.name, size: file.size, type: file.type, isJpeg, isPng },
-        healthScore: score,
-        healthDetails: details,
-        colorHistogram,
-        possibleEditor,
-      });
-    } catch (err) {
-      console.error('Analysis error:', err);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, []);
-
-  const isDidactic = mode === 'didactic';
+  const navigate = useNavigate();
+  const [hovered, setHovered] = useState<DocType | null>(null);
 
   return (
     <div className="min-h-screen bg-background forensic-grid relative">
@@ -141,127 +58,141 @@ const Index = () => {
                 Forensic<span className="text-primary">Eye</span>
               </h1>
               <p className="text-[10px] text-muted-foreground font-mono tracking-widest uppercase">
-                Análise Forense de Imagens
+                Análise Forense de Documentos
               </p>
             </div>
-          </div>
-
-          <div className="flex items-center gap-1 bg-surface-2 rounded-lg p-1">
-            <button
-              onClick={() => setMode('didactic')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                mode === 'didactic' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              Didático
-            </button>
-            <button
-              onClick={() => setMode('expert')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                mode === 'expert' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              Expert
-            </button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
-        <AnimatePresence mode="wait">
-          {!result ? (
+      <main className="container mx-auto px-4 py-8">
+        {/* Hero */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="text-center max-w-3xl mx-auto mb-12 mt-8"
+        >
+          <div className="w-20 h-20 mx-auto rounded-2xl bg-primary/5 border border-primary/20 flex items-center justify-center mb-6 glow-primary">
+            <Shield className="w-10 h-10 text-primary" />
+          </div>
+          <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-4">
+            Análise Forense de <span className="text-primary text-glow">Documentos</span>
+          </h2>
+          <p className="text-muted-foreground max-w-xl mx-auto leading-relaxed">
+            Selecione o tipo de documento para iniciar uma análise detalhada de integridade, metadados e estrutura interna.
+          </p>
+        </motion.div>
+
+        {/* Stats bar */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="flex flex-wrap justify-center gap-6 mb-12"
+        >
+          {[
+            { icon: Zap, label: 'Client-Side', desc: 'Processamento local' },
+            { icon: Eye, label: 'Deep Parse', desc: 'Análise byte-a-byte' },
+            { icon: Layers, label: 'Multi-Format', desc: 'JPEG, PNG, PDF' },
+            { icon: Sparkles, label: 'Forensic', desc: 'Nível pericial' },
+          ].map((stat, i) => (
+            <div key={i} className="flex items-center gap-2 px-4 py-2 bg-surface-2 rounded-lg border border-border/50">
+              <stat.icon className="w-4 h-4 text-primary" />
+              <div>
+                <span className="text-xs font-semibold text-foreground">{stat.label}</span>
+                <p className="text-[10px] text-muted-foreground">{stat.desc}</p>
+              </div>
+            </div>
+          ))}
+        </motion.div>
+
+        {/* Document type cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+          {docTypes.map((doc, i) => (
             <motion.div
-              key="upload"
-              initial={{ opacity: 0, y: 20 }}
+              key={doc.id}
+              initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="max-w-xl mx-auto mt-24"
+              transition={{ delay: 0.3 + i * 0.1 }}
+              onMouseEnter={() => setHovered(doc.id)}
+              onMouseLeave={() => setHovered(null)}
+              onClick={() => navigate(`/analyze/${doc.id}`)}
+              className={`
+                group relative cursor-pointer rounded-xl border bg-card overflow-hidden
+                transition-all duration-300
+                ${hovered === doc.id
+                  ? `border-primary/50 ${doc.glowClass} scale-[1.02]`
+                  : 'border-border hover:border-primary/30'
+                }
+              `}
             >
-              <div className="text-center mb-8">
-                <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/5 border border-primary/20 flex items-center justify-center mb-4 glow-primary">
-                  <Shield className="w-8 h-8 text-primary" />
+              {/* Gradient overlay on hover */}
+              <div className={`
+                absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500
+                bg-gradient-to-b from-primary/5 via-transparent to-transparent
+              `} />
+
+              <div className="relative p-6">
+                {/* Icon + Badge */}
+                <div className="flex items-start justify-between mb-4">
+                  <div className={`
+                    w-14 h-14 rounded-xl flex items-center justify-center
+                    transition-all duration-300
+                    ${hovered === doc.id ? 'bg-primary/15 scale-110' : 'bg-surface-2'}
+                  `}>
+                    <doc.icon className={`w-7 h-7 ${doc.color} transition-all duration-300`} />
+                  </div>
+                  <span className="text-[10px] font-mono text-muted-foreground bg-surface-2 px-2 py-1 rounded">
+                    {doc.ext}
+                  </span>
                 </div>
-                <h2 className="text-2xl font-bold text-foreground mb-2">Análise Forense de Imagens</h2>
-                <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                  Faça upload de uma imagem JPEG, PNG ou PDF para análise completa de integridade, metadados e compressão.
+
+                {/* Title */}
+                <h3 className="text-lg font-bold text-foreground mb-2 flex items-center gap-2">
+                  {doc.label}
+                  <ArrowRight className={`
+                    w-4 h-4 transition-all duration-300
+                    ${hovered === doc.id ? 'opacity-100 translate-x-0 text-primary' : 'opacity-0 -translate-x-2'}
+                  `} />
+                </h3>
+
+                {/* Description */}
+                <p className="text-xs text-muted-foreground leading-relaxed mb-4">
+                  {doc.description}
                 </p>
+
+                {/* Features */}
+                <div className="flex flex-wrap gap-1.5">
+                  {doc.features.map((feat, fi) => (
+                    <span
+                      key={fi}
+                      className="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-2 text-muted-foreground border border-border/50"
+                    >
+                      {feat}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <FileUpload onFileSelect={handleFileSelect} isAnalyzing={isAnalyzing} />
+
+              {/* Bottom bar */}
+              <div className={`
+                h-1 transition-all duration-500
+                ${hovered === doc.id ? 'bg-primary' : 'bg-border'}
+              `} />
             </motion.div>
-          ) : (
-            <motion.div
-              key="results"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="space-y-6"
-            >
-              {/* Header row */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-bold text-foreground">Resultados da Análise</h2>
-                  <p className="text-xs text-muted-foreground font-mono">
-                    {result.fileInfo.name} — {result.totalMarkers} marcadores — {result.markerSequence.length > 80 ? result.markerSequence.slice(0, 80) + '...' : result.markerSequence}
-                  </p>
-                </div>
-                <button
-                  onClick={() => { setResult(null); setImageUrl(null); setExifData(null); }}
-                  className="px-3 py-1.5 text-xs font-medium text-primary border border-primary/30 rounded-lg hover:bg-primary/10 transition-colors"
-                >
-                  Nova Análise
-                </button>
-              </div>
+          ))}
+        </div>
 
-              {/* Structure summary bar */}
-              <StructureSummary result={result} />
-
-              {/* Main grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left column */}
-                <div className="space-y-6">
-                  <HealthIndicator score={result.healthScore} details={result.healthDetails} isDidactic={isDidactic} />
-                  <CompressionInfo result={result} isDidactic={isDidactic} />
-                  <MetadataPanel exifData={exifData} fileInfo={result.fileInfo} isDidactic={isDidactic} />
-                  {result.signatures.length > 0 && (
-                    <SignatureMatch signatures={result.signatures} isDidactic={isDidactic} />
-                  )}
-                </div>
-
-                {/* Center column */}
-                <div className="space-y-6">
-                  {imageUrl && <ImagePreview imageUrl={imageUrl} fileName={result.fileInfo.name} />}
-                  <HistogramChart histogram={result.colorHistogram} isDidactic={isDidactic} />
-                  {imageUrl && result.fileInfo.isJpeg && (
-                    <ELAViewer imageUrl={imageUrl} isDidactic={isDidactic} />
-                  )}
-                  {result.quantizationTables.length > 0 && (
-                    <QuantizationView
-                      tables={result.quantizationTables}
-                      isDidactic={isDidactic}
-                      possibleEditor={result.possibleEditor}
-                    />
-                  )}
-                </div>
-
-                {/* Right column */}
-                <div className="space-y-6">
-                  {result.markers.length > 0 && (
-                    <MarkerTable markers={result.markers} isDidactic={isDidactic} />
-                  )}
-                  {result.huffmanTables.length > 0 && (
-                    <HuffmanView tables={result.huffmanTables} isDidactic={isDidactic} />
-                  )}
-                  {mode === 'expert' && <HexViewer hexLines={result.hexDump} />}
-                </div>
-              </div>
-
-              {/* Full-width log at bottom */}
-              <ForensicLog logLines={result.logOutput} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Footer info */}
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.8 }}
+          className="text-center text-[10px] text-muted-foreground font-mono mt-12"
+        >
+          Todos os arquivos são processados localmente no seu navegador. Nenhum dado é enviado para servidores externos.
+        </motion.p>
       </main>
     </div>
   );
